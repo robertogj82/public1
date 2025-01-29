@@ -1,0 +1,93 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "15m"
+    }
+  },
+  "input": {
+    "chain": {
+      "inputs": [
+        {
+          "current_data": {
+            "search": {
+              "request": {
+                "indices": ["pepito"],
+                "body": {
+                  "size": 0,
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        { "term": { "response_code": "429" } },
+                        { "range": { "@timestamp": { "gte": "now-15m", "lte": "now" } } }
+                      ]
+                    }
+                  },
+                  "aggs": {
+                    "current_count": {
+                      "value_count": { "field": "response_code" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "past_data": {
+            "search": {
+              "request": {
+                "indices": ["pepito"],
+                "body": {
+                  "size": 0,
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        { "term": { "response_code": "429" } },
+                        { "range": { "@timestamp": { "gte": "now-7d-15m", "lte": "now-7d" } } }
+                      ]
+                    }
+                  },
+                  "aggs": {
+                    "past_count": {
+                      "value_count": { "field": "response_code" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "condition": {
+    "script": {
+      "source": """
+        def current = ctx.payload.current_data.aggregations.current_count.value;
+        def past = ctx.payload.past_data.aggregations.past_count.value;
+        
+        if (past == 0) {
+          return current > 0;
+        }
+
+        def diff = Math.abs(current - past) / past;
+        return diff > 0.1;
+      """
+    }
+  },
+  "actions": {
+    "notify_admin": {
+      "email": {
+        "to": ["admin@example.com"],
+        "subject": "Alerta: Aumento de errores 429 en 'pepito'",
+        "body": """
+        El número de códigos de respuesta 429 ha cambiado más del 10% en comparación con la misma franja horaria de la semana pasada.
+
+        - Últimos 15 minutos: {{ctx.payload.current_data.aggregations.current_count.value}}
+        - Hace 7 días: {{ctx.payload.past_data.aggregations.past_count.value}}
+        - Diferencia: {{(ctx.payload.current_data.aggregations.current_count.value - ctx.payload.past_data.aggregations.past_count.value) / ctx.payload.past_data.aggregations.past_count.value * 100}}%
+        """
+      }
+    }
+  }
+}
