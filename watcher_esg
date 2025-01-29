@@ -1,0 +1,98 @@
+{
+  "trigger": {
+    "schedule": {
+      "interval": "15m"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ["pepito"],
+        "body": {
+          "size": 0,
+          "query": {
+            "bool": {
+              "filter": [
+                { "term": { "response_code": "429" } },
+                { "range": { "@timestamp": { "gte": "now-15m", "lte": "now" } } }
+              ]
+            }
+          },
+          "aggs": {
+            "current_count": {
+              "value_count": { "field": "response_code" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "condition": {
+    "script": {
+      "source": """
+        def current = ctx.payload.aggregations.current_count.value;
+        return current > 0;
+      """
+    }
+  },
+  "transform": {
+    "script": {
+      "source": """
+        def current = ctx.payload.aggregations.current_count.value;
+        
+        // Segunda consulta para obtener la cantidad de hace 7 días
+        def search_response = ctx.watcher.http.execute({
+          "method": "POST",
+          "path": "/pepito/_search",
+          "body": """
+          {
+            "size": 0,
+            "query": {
+              "bool": {
+                "filter": [
+                  { "term": { "response_code": "429" } },
+                  { "range": { "@timestamp": { "gte": "now-7d-15m", "lte": "now-7d" } } }
+                ]
+              }
+            },
+            "aggs": {
+              "past_count": {
+                "value_count": { "field": "response_code" }
+              }
+            }
+          }
+          """
+        });
+        
+        def past = search_response.aggregations.past_count.value;
+        def diff = past > 0 ? Math.abs(current - past) / past : 1;
+        
+        return [
+          "current_count": current,
+          "past_count": past,
+          "difference": diff
+        ];
+      """
+    }
+  },
+  "condition": {
+    "script": {
+      "source": "return ctx.payload.difference > 0.1;"
+    }
+  },
+  "actions": {
+    "notify_admin": {
+      "email": {
+        "to": ["admin@example.com"],
+        "subject": "Alerta: Aumento de errores 429 en 'pepito'",
+        "body": """
+        El número de códigos de respuesta 429 ha aumentado más del 10% en comparación con la misma franja horaria de la semana pasada.
+        
+        - Últimos 15 minutos: {{ctx.payload.current_count}}
+        - Hace 7 días: {{ctx.payload.past_count}}
+        - Diferencia: {{ctx.payload.difference}}%
+        """
+      }
+    }
+  }
+}
