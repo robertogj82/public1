@@ -1,0 +1,14 @@
+[
+  {
+    "set": {
+      "field": "ingest_timestamp",
+      "value": "{{_ingest.timestamp}}"
+    }
+  },
+  {
+    "script": {
+      "lang": "painless",
+      "source": " \n            if(ctx.containsKey(\"ingest_timestamp\") && ctx.containsKey(\"@timestamp\")) { \n              ctx['lag_in_seconds'] = ChronoUnit.MILLIS.between(ZonedDateTime.parse(ctx['@timestamp']), ZonedDateTime.parse(ctx['ingest_timestamp']))/1000; \n            } \n        "
+    }
+  }
+]
